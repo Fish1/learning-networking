@@ -17,6 +17,22 @@ app.get('/', function(request, response) {
 	response.sendFile(path.join(__dirname, 'static/game.html'));
 });
 
+app.get('/three.min.js', function(request, response) {
+	response.sendFile(path.join(__dirname, 'node_modules/three/build/three.min.js'));
+});
+
+app.get('/nipplejs.min.js', function(request, response) {
+	response.sendFile(path.join(__dirname, 'node_modules/nipplejs/dist/nipplejs.min.js'));
+});
+
+app.get('/side.png', function(request, response) {
+	response.sendFile(path.join(__dirname, 'static/side.png'));
+});
+
+app.get('/face.png', function(request, response) {
+	response.sendFile(path.join(__dirname, 'static/face.png'));
+});
+
 // start server
 server.listen(25565, function() {
 	console.log('Server running on port 25565...');
@@ -26,34 +42,33 @@ var sockets = new Map();
 var users = new Map();
 
 // emit position data to every connection, except to the specified uuid
-function emitPosition(uuid, posX, posY) {
-
+function emitPosition(uuid, posX, posZ, rotY) {
 	sockets.forEach(function(entry) {
 
 		if(entry.uuid != uuid) {
 			entry.socket.emit('position',
 				{uuid: uuid,
 				posX: posX,
-				posY: posY});
+				posZ: posZ,
+				rotY: rotY});
 		}
 	});
 };
 
 // emit username for everyone to update
 function emitUsername(uuid, username) {
-	
 	sockets.forEach(function(entry) {
 		if(entry.uuid != uuid) {
-			entry.socket.emit('username', {uuid: uuid, username: username});
+			entry.socket.emit('username', 
+				{uuid: uuid,
+				username: username});
 		}
 	});
 };
 
 // emit a leave so clients stop rendering disconnected uers
 function emitLeave(uuid) {
-	
 	sockets.forEach(function(entry) {
-		
 		entry.socket.emit('leave', uuid);
 	});
 };
@@ -73,7 +88,8 @@ io.on('connection', function(socket) {
 		uuid: uuid,
 		username: "",
 		posX: 25,
-		posY: 25
+		posZ: 25,
+		rotY: 0
 	};
 
 	console.log('Connect - ' + address);
@@ -105,39 +121,26 @@ io.on('connection', function(socket) {
 
 	// update position based on key strokes
 	socket.on('move', function(data) {
-		if(data === 'left')
-		{
-			userData.posX -= 4;
-		}
-		else if(data === 'right')
-		{
-			userData.posX += 4;
+		var x = Math.cos(data.angle - (Math.PI / 2)) * data.distance * -1;
+		var y = Math.sin(data.angle - (Math.PI / 2)) * data.distance;
 
-		}
-		else if(data === 'up')
-		{
-			userData.posY -= 4;
-		}
-		else if(data === 'down')
-		{
-			userData.posY += 4;
-		}
+		userData.posZ += y;
+		userData.posX += x;
+	});
 
-		// tell everyone else about the new position
-//		emitPosition(uuid, userData.posX, userData.posY);
+	socket.on('angle', function(data) {
+		userData.rotY = data.angle;
 	});
 
 	socket.on('username', function(data) {
 		userData.username = data;
-
 		emitUsername(uuid, data);
 	});
 });
 
 setInterval(function() {
-	
 	sockets.forEach(function(entry) {
 		var user = users.get(entry.uuid);
-		emitPosition(entry.uuid, user.posX, user.posY);
+		emitPosition(user.uuid, user.posX, user.posZ, user.rotY);
 	});
-}, 75);
+}, 100);
