@@ -12,39 +12,35 @@ var socket = io().connect('http://jacobenders.ddns.net:25565');
 var uuid;
 
 var connections = new Map();
+var enemies = new Map();
 
 socket.on('welcome', function(data) {
 	uuid = data.uuid;
 	console.log('Your ID is ' + uuid);
-	connections.set(data.uuid, {uuid: data.uuid,
-		posX: data.posX,
-		posZ: data.posZ, 
-		username: username});
-	socket.emit('username', username);
 });
 
-socket.on('init', function(data) {
+socket.on('spawn-player', function(data) {
 	connections.set(data.uuid, data);
 	var geo = new THREE.BoxBufferGeometry(3,3,3);
 	var loader = new THREE.TextureLoader();
 	var mats = [
 		new THREE.MeshBasicMaterial({
-			map: loader.load('/side.png')
+			map: loader.load('/resources/side.png')
 		}),
 		new THREE.MeshBasicMaterial({
-			map: loader.load('/side.png')
+			map: loader.load('/resources/side.png')
 		}),
 		new THREE.MeshBasicMaterial({
-			map: loader.load('/side.png')
+			map: loader.load('/resources/side.png')
 		}),
 		new THREE.MeshBasicMaterial({
-			map: loader.load('/side.png')
+			map: loader.load('/resources/side.png')
 		}),
 		new THREE.MeshBasicMaterial({
-			map: loader.load('/side.png')
+			map: loader.load('/resources/side.png')
 		}),
 		new THREE.MeshBasicMaterial({
-			map: loader.load('/face.png')
+			map: loader.load('/resources/face.png')
 		})
 	];
 	var mesh = new THREE.Mesh(geo, mats);
@@ -54,45 +50,59 @@ socket.on('init', function(data) {
 	connections.get(data.uuid).mesh = mesh;	
 	connections.get(data.uuid).tween = 0;
 
-
 	scene.add(mesh);
 });
 
-socket.on('position', function(data) {
+socket.on('position-player', function(data) {
 	var con = connections.get(data.uuid);
 	con.posX = data.posX;
 	con.posZ = data.posZ;
-	con.rotY = data.rotY;
-
-	var mesh = connections.get(data.uuid).mesh;
-	//mesh.position.z = data.posZ;
-//	mesh.position.x = data.posX;
-//	mesh.rotation.y = data.rotY;
+	con.rotation = data.rotation;
+	//console.log(data.rotation);
+	//var mesh = connections.get(data.uuid).mesh;
 });
 
-socket.on('username', function(data) {
-	connections.get(data.uuid).username = data.username;
-});
-
-socket.on('leave', function(data) {
+socket.on('despawn-player', function(data) {
 	scene.remove(connections.get(data).mesh);	
 	connections.delete(data);
 	console.log('Disconnect - ' + data);
 });
-/*
-var canvas = document.getElementById('canvas');
-var context = canvas.getContext('2d');
-*/
-/*
-context.font = "40px Arial";
-canvas.width = canvas.offsetWidth;
-canvas.height = canvas.offsetHeight;
-*/
+
+socket.on('position-enemies', function(data) {
+	data.forEach(function(entry) {
+		if(enemies.has(entry.ueid) === false)
+		{
+			var geo = new THREE.BoxBufferGeometry(3,3,3);
+			var mesh = new THREE.Mesh(geo);
+			enemies.set(entry.ueid, {mesh: mesh});
+			scene.add(mesh);
+		}
+
+		var enemy = enemies.get(entry.ueid);
+		enemy.mesh.position.x = entry.posX;
+		enemy.mesh.position.z = entry.posZ;
+		enemy.mesh.rotation.y = entry.rotY;
+	});
+});
+
+socket.on('despawn-enemy', function(data) {
+	var enemy = enemies.get(data);
+	scene.remove(enemy.mesh);
+	enemies.delete(data);
+});
+
 var keyStates = new Map();
 
 function onKeyDown(e) {
 	var key = String.fromCharCode(e.which).toLowerCase();
 	keyStates.set(key, true);
+
+	if(key === ' ')
+	{
+		socket.emit('attack');
+		swingSword.reset();
+		swingSword.play();
+	}
 };
 
 function onKeyUp(e) {
@@ -113,36 +123,46 @@ function renderScreen() {
 	});
 };
 
-var speed = 4.0;
-
-function updateLogic() {
+var moveSpeed = 30.0;
+var rotateSpeed = Math.PI / 1.8;
+function updateInput(delta) {
 
 	if(keyStates.get('w') == true)
 	{
-		socket.emit('move',{angle: camera.rotation.y, distance: 1});
-		var x = Math.cos(camera.rotation.y - (Math.PI / 2));
-		var y = Math.sin(camera.rotation.y - (Math.PI / 2));
-		camera.position.z += y;
-		camera.position.x -= x;
+		var forwards = new THREE.Vector3();
+		playermesh.getWorldDirection(forwards);
+		forwards.y = 0;
+		forwards.normalize();
+
+		playermesh.position.z -= forwards.z * moveSpeed * delta;
+		playermesh.position.x -= forwards.x * moveSpeed * delta;
 	}
 
 	if(keyStates.get('s') == true)
 	{
-		socket.emit('move',{angle: camera.rotation.y, distance: -1});
-		var x = Math.cos(camera.rotation.y - (Math.PI / 2));
-		var y = Math.sin(camera.rotation.y - (Math.PI / 2));
-		camera.position.z -= y;
-		camera.position.x += x;
+		var forwards = new THREE.Vector3();
+		playermesh.getWorldDirection(forwards);
+		forwards.y = 0;
+		forwards.normalize();
+
+		playermesh.position.z += forwards.z * moveSpeed * delta;
+		playermesh.position.x += forwards.x * moveSpeed * delta;
 	}
 
-	if(keyStates.get('q') == true || keyStates.get('a') == true){
-		camera.rotation.y += 0.1;
-		socket.emit('angle', {angle: camera.rotation.y});
+	if(keyStates.get('q') == true || keyStates.get('a') == true)
+	{
+		playermesh.rotateOnWorldAxis(
+			new THREE.Vector3(0,1,0), rotateSpeed * delta);
 	}
 	
-	if(keyStates.get('e') == true || keyStates.get('d') == true){
-		camera.rotation.y -= 0.1;
-		socket.emit('angle', {angle: camera.rotation.y});
+	if(keyStates.get('e') == true || keyStates.get('d') == true)
+	{
+		playermesh.rotateOnWorldAxis(
+			new THREE.Vector3(0,1,0), -rotateSpeed * delta);
+	}
+
+	if(keyStates.get(' ') == true)
+	{
 	}
 }
 
@@ -166,9 +186,37 @@ function updateTween() {
 	});
 }
 
-setInterval(function (){
-	updateLogic();
-}, 50);
+function updateTweenTwo(delta) {
+	connections.forEach(function(entry) {
+		if(entry.uuid == uuid)
+			return;
+
+		var mesh = entry.mesh;
+
+		var dx = entry.posX - mesh.position.x;
+		var dz = entry.posZ - mesh.position.z;
+
+		mesh.position.x += dx * delta * 7;
+		mesh.position.z += dz * delta * 7;
+		//mesh.rotation.y = entry.rotY;
+		mesh.rotation.set(entry.rotation._x, entry.rotation._y, entry.rotation._z);
+		//mesh.rotation.set(0,0,0);
+		//mesh.setRotationFromQuaternion(entry.rotation);
+		//mesh.rotateOnWorldAxis(
+		//	new THREE.Vector3(0,1,0), entry.rotY);
+		/*
+		var dr = entry.rotY - mesh.rotation.y;
+		mesh.rotation.y += dr * delta * 7;
+		*/
+		//mesh.rotation.y = entry.rotY * 2 * Math.PI;
+	});
+}
+
+function emitPosition() {
+	socket.emit('position', 
+		{posX: playermesh.position.x, posZ: playermesh.position.z, 
+			rotation: playermesh.rotation});
+}
 
 var manager = nipplejs.create({
 	color: 'white'});
@@ -213,24 +261,28 @@ manager.on('added', function(evt, nipple) {
 		keyStates.set('q', false);			
 		keyStates.set('e', false);			
 	});
+
+	nipple.on('start', function(evt) {
+		socket.emit('attack');
+		swingSword.reset();
+		swingSword.play();
+	});
 });
 
 var camera, scene, renderer;
+var sword, swordAnimation;
 var ground;
+var mixer;
+var playermesh;
+var swingSword;
 
 function init() {
 	camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 1000);
 	camera.position.z = 25;
 	camera.position.x = 25;
-	camera.position.y = 2.5;
+	camera.position.y = 10;
+	camera.rotation.x = -(Math.PI / 4.5);
 	scene = new THREE.Scene();
-
-	/*
-	var geometry = new THREE.BoxBufferGeometry(20,20,20);
-	mesh = new THREE.Mesh(geometry);
-	mesh.material.color.setHex(0xffffff);
-	scene.add(mesh);
-	*/
 
 	var g = new THREE.PlaneGeometry(100, 100);
 	var mat = new THREE.MeshBasicMaterial( {color:0x00ff00, side:THREE.DoubleSide});
@@ -244,6 +296,50 @@ function init() {
 	document.body.appendChild(renderer.domElement);
 
 	window.addEventListener('resize', onWindowResize, false);
+
+	var loader = new THREE.GLTFLoader().setPath('resources/');
+	loader.load('sword.glb', function(gltf) {
+		var mesh = gltf.scene.children[0];
+		mesh.material = new THREE.MeshBasicMaterial({color:0xff0000});
+		//mesh.scale.set(0.5,1,0.5);
+		gltf.scene.scale.set(0.5,1,0.5);
+		scene.add(gltf.scene);
+		sword = gltf.scene;
+
+		mixer = new THREE.AnimationMixer(gltf.scene);
+		swingSword = mixer.clipAction(gltf.animations[0]);
+		swingSword.setDuration(0.20);
+		swingSword.setLoop(THREE.LoopOnce);
+
+	}, undefined, function(error) {
+		console.log(error);
+	});
+	
+	var playergeo = new THREE.BoxBufferGeometry(3,3,3);
+	var loader = new THREE.TextureLoader().setPath('resources/');
+	var playermats = [
+		new THREE.MeshBasicMaterial({
+			map: loader.load('side.png')
+		}),
+		new THREE.MeshBasicMaterial({
+			map: loader.load('side.png')
+		}),
+		new THREE.MeshBasicMaterial({
+			map: loader.load('side.png')
+		}),
+		new THREE.MeshBasicMaterial({
+			map: loader.load('side.png')
+		}),
+		new THREE.MeshBasicMaterial({
+			map: loader.load('side.png')
+		}),
+		new THREE.MeshBasicMaterial({
+			map: loader.load('face.png')
+		})
+	];
+	playermesh = new THREE.Mesh(playergeo, playermats);
+	playermesh.position.y = 2;
+	scene.add(playermesh);
 };
 
 function onWindowResize() {
@@ -252,15 +348,52 @@ function onWindowResize() {
 	renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+var clock = new THREE.Clock();
+clock.start();
+
+var cameraGoTo = new THREE.Vector3();
+
 function animate() {
 	requestAnimationFrame(animate);
 	renderer.render(scene, camera);
-	updateTween();
+
+	var delta = clock.getDelta();
+	updateInput(delta);
+	updateTweenTwo(delta);
+
+	mixer.update(delta);
+
+	if(clock.getElapsedTime() >= 0.05)
+	{
+		emitPosition();
+		clock.start();
+	}
+
+	var forwards = new THREE.Vector3();
+	playermesh.getWorldDirection(forwards);
+	forwards.y = 0;
+	forwards.normalize();
+
+	sword.position.x = playermesh.position.x - forwards.x * 7;
+	sword.position.z = playermesh.position.z - forwards.z * 7;
+
+	var quat = new THREE.Quaternion();
+	playermesh.getWorldQuaternion(quat);
+	//quat.x = 0;
+	//quat.z = 0;
+	//quat.normalize();
+	sword.setRotationFromQuaternion(quat);
+	sword.rotation.y -= (Math.PI);
+	
+	cameraGoTo.x = playermesh.position.x + forwards.x * 20;
+	cameraGoTo.z = playermesh.position.z + forwards.z * 20;
+	cameraGoTo.y = camera.position.y;
+
+	camera.position.lerp(cameraGoTo, 0.2);
+	camera.quaternion.rotateTowards(quat, Math.PI * 0.9 * delta);
 }
 
 init();
 animate();
-
-
 
 });

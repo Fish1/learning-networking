@@ -8,9 +8,12 @@ var server = http.Server(app);
 var io = socketIO(server);
 
 var uuidCounter = 0;
+var ueidCounter = 0;
 
 app.set('port', 25565);
+
 app.use('/static', express.static(__dirname + '/static'));
+app.use('/resources', express.static(__dirname + '/resources'));
 
 // send static
 app.get('/', function(request, response) {
@@ -18,19 +21,18 @@ app.get('/', function(request, response) {
 });
 
 app.get('/three.min.js', function(request, response) {
-	response.sendFile(path.join(__dirname, 'node_modules/three/build/three.min.js'));
+	response.sendFile(path.join(__dirname, 
+		'node_modules/three/build/three.min.js'));
+});
+
+app.get('/GLTFLoader.js', function(request, response) {
+	response.sendFile(path.join(__dirname, 
+		'node_modules/three/examples/js/loaders/GLTFLoader.js'));
 });
 
 app.get('/nipplejs.min.js', function(request, response) {
-	response.sendFile(path.join(__dirname, 'node_modules/nipplejs/dist/nipplejs.min.js'));
-});
-
-app.get('/side.png', function(request, response) {
-	response.sendFile(path.join(__dirname, 'static/side.png'));
-});
-
-app.get('/face.png', function(request, response) {
-	response.sendFile(path.join(__dirname, 'static/face.png'));
+	response.sendFile(path.join(__dirname, 
+		'node_modules/nipplejs/dist/nipplejs.min.js'));
 });
 
 // start server
@@ -41,37 +43,42 @@ server.listen(25565, function() {
 var sockets = new Map();
 var users = new Map();
 
+var enemies = [];
+enemies.push({ueid: ueidCounter++, posX: 0, posZ: 0, rotY: 0});
+enemies.push({ueid: ueidCounter++, posX: 50, posZ: 50, rotY: 10});
+
 // emit position data to every connection, except to the specified uuid
-function emitPosition(uuid, posX, posZ, rotY) {
-	sockets.forEach(function(entry) {
-
-		if(entry.uuid != uuid) {
-			entry.socket.emit('position',
-				{uuid: uuid,
-				posX: posX,
-				posZ: posZ,
-				rotY: rotY});
-		}
-	});
-};
-
-// emit username for everyone to update
-function emitUsername(uuid, username) {
+function emitPositionPlayer(uuid) {
+	var user = users.get(uuid);
 	sockets.forEach(function(entry) {
 		if(entry.uuid != uuid) {
-			entry.socket.emit('username', 
+			entry.socket.emit('position-player',
 				{uuid: uuid,
-				username: username});
+				posX: user.posX,
+				posZ: user.posZ,
+				rotation: user.rotation});
 		}
 	});
 };
 
 // emit a leave so clients stop rendering disconnected uers
-function emitLeave(uuid) {
+function emitDespawnPlayer(uuid) {
 	sockets.forEach(function(entry) {
-		entry.socket.emit('leave', uuid);
+		entry.socket.emit('despawn-player', uuid);
 	});
-};
+}
+
+function emitPositionEnemies() {
+	sockets.forEach(function(entry) {
+		entry.socket.emit('position-enemies', enemies);
+	});
+}
+
+function emitDespawnEnemy(ueid) {
+	sockets.forEach(function(entry) {
+		entry.socket.emit('despawn-enemy', ueid);
+	});
+}
 
 io.on('connection', function(socket) {
 
@@ -86,10 +93,9 @@ io.on('connection', function(socket) {
 
 	var userData = {
 		uuid: uuid,
-		username: "",
 		posX: 25,
 		posZ: 25,
-		rotY: 0
+		rotation: {}
 	};
 
 	console.log('Connect - ' + address);
@@ -101,10 +107,10 @@ io.on('connection', function(socket) {
 	sockets.forEach(function(entry) {
 		// tell new user about other persons position
 		var user = users.get(entry.uuid);
-		socket.emit('init', user);
+		socket.emit('spawn-player', user);
 
 		// tell other person about new users position
-		entry.socket.emit('init', userData);
+		entry.socket.emit('spawn-player', userData);
 	});
 
 	// add the new user to the connection map
@@ -116,31 +122,69 @@ io.on('connection', function(socket) {
 		console.log('Disconnect - ' + address);
 		users.delete(uuid);
 		sockets.delete(uuid);
-		emitLeave(uuid);
+		emitDespawnPlayer(uuid);
 	});
 
-	// update position based on key strokes
-	socket.on('move', function(data) {
-		var x = Math.cos(data.angle - (Math.PI / 2)) * data.distance * -1;
-		var y = Math.sin(data.angle - (Math.PI / 2)) * data.distance;
-
-		userData.posZ += y;
-		userData.posX += x;
+	socket.on('position', function(data) {
+		// do error correction here... soon
+		userData.posZ = data.posZ;
+		userData.posX = data.posX;
+		userData.rotation = data.rotation;
 	});
 
-	socket.on('angle', function(data) {
-		userData.rotY = data.angle;
-	});
+	socket.on('attack', function(data) {
+		var removeArray = [];
 
-	socket.on('username', function(data) {
-		userData.username = data;
-		emitUsername(uuid, data);
+		enemies.forEach(function(entry, index) {
+			var dx = entry.posX - userData.posX;
+			var dz = entry.posZ - userData.posZ;
+			var distance = Math.sqrt(
+				Math.pow(dx, 2) +
+				Math.pow(dz, 2));
+			
+			if(distance <= 12)
+			{
+			//	removeArray.push({index: index, ueid: entry.ueid});
+				entry.posX += (dx / distance) * 12;
+				entry.posY += (dz / distance) * 12;
+			}
+		});
+
+		removeArray.forEach(function(entry) {
+			enemies.splice(entry.index,1);
+			emitDespawnEnemy(entry.ueid);
+		});
 	});
 });
 
 setInterval(function() {
 	sockets.forEach(function(entry) {
-		var user = users.get(entry.uuid);
-		emitPosition(user.uuid, user.posX, user.posZ, user.rotY);
+		emitPositionPlayer(entry.uuid);
+	});
+
+	emitPositionEnemies();
+}, 50);
+
+setInterval(function() {
+	enemies.forEach(function(entry) {
+		entry.posX += (Math.random() - 0.5) * 2;
+		if(entry.posX > 50)
+			entry.posX = 50;
+		else if(entry.posX < -50)
+			entry.posX = -50;
+		
+		entry.posZ += (Math.random() - 0.5) * 2;
+		if(entry.posZ > 50)
+			entry.posZ = 50;
+		else if(entry.posZ < -50)
+			entry.posZ = -50;
 	});
 }, 100);
+
+setInterval(function() {
+	if(enemies.length >= 5)
+		return;
+	enemies.push({ueid: ueidCounter++, 
+		posX: (Math.random() - 0.5) * 100, 
+		posZ: (Math.random() - 0.5) * 100, rotY: 10});
+}, 5000);
